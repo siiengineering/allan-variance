@@ -1,4 +1,5 @@
 # Author: Nikolay Mayorov <nikolay.mayorov@zoho.com>
+# Quang Nguyen
 
 from __future__ import division
 import numpy as np
@@ -24,7 +25,7 @@ def _compute_cluster_sizes(n_samples, dt, tau_min, tau_max, n_clusters):
 
 
 def allan_variance(x, dt=1, tau_min=None, tau_max=None,
-                   n_clusters=100, input_type="increment"):
+                   n_clusters=500, input_type="increment"):
     """Compute Allan variance (AVAR).
 
     Consider an underlying measurement y(t). Our sensors output integrals of
@@ -184,5 +185,78 @@ def params_from_avar(tau, avar, effects=None, sensor_names=None):
     if single_series:
         params = params.iloc[0]
         prediction = prediction[:, 0]
+
+    return params, prediction
+
+def data_to_calibrate(tau, avar):
+    """Estimate noise parameters from Allan variance.
+
+    This code is based on the example of mathworks for the inertial sensor noise analysis using allan variance
+
+    Parameters
+    ----------
+    tau : ndarray, shape (n,)
+        Values of averaging time.
+    avar : ndarray, shape (n,) or (n, m)
+        Values of Allan variance corresponding to `tau`.
+    effects : list or None, optional
+        Which effects to estimate. Allowed effects are 'quantization', 'white',
+        'flicker', 'walk', 'ramp'. If None (default), estimate all of the
+        mentioned above effects.
+    sensor_names : list or None, optional
+        How to name sensors in the output. If None (default), use integer
+        values as names.
+
+    Returns
+    -------
+    params : pandas DataFrame or Series
+        Estimated parameters.
+    prediction : ndarray, shape (n,) or (n, m)
+        Predicted values of Allan variance using the estimated parameters.
+    """
+    ALLOWED_EFFECTS = ['quantization', 'white', 'flicker', 'walk', 'ramp', 'walk_rate']
+
+    avar = np.asarray(avar)
+    single_series = avar.ndim == 1
+    params = []
+    prediction = []
+
+    # The angle Random Walk
+    slope = -0.5
+    log_tau = np.log10(tau)
+    log_a_dev = np.log10(avar)
+
+    d_log_a_dev = np.divide(np.subtract(log_a_dev[1:], log_a_dev[:-1]), np.subtract(log_tau[1:], log_tau[:-1]))
+    i = np.where(np.abs(d_log_a_dev - slope) == np.min(np.abs(d_log_a_dev - slope)))
+
+    b = log_a_dev[i] - slope*log_tau[i]
+
+    logN = slope*np.log10(1) + b
+    angle_random_walk = 10**(logN)
+
+    params.append(angle_random_walk)
+
+    # Rate random walk
+    slope_2 = 0.5
+    i_2 = np.where(np.abs(d_log_a_dev - slope_2) == np.min(np.abs(d_log_a_dev - slope_2)))
+
+    b_2 = d_log_a_dev[i] - slope_2*log_tau[i]
+
+    logK = slope*np.log10(3) + b_2
+    rate_random_walk = 10**(logK)
+
+    params.append(rate_random_walk)
+
+    # Bias stability
+    slope_3 = 0.0
+    i_3 = np.where(np.abs(d_log_a_dev - slope_2) == np.min(np.abs(d_log_a_dev - slope_2)))
+
+    b_3 = d_log_a_dev[i] - slope_3*log_tau[i]
+
+    scfB = np.sqrt(2*np.log(2)/np.pi)
+    logB = b_3 - np.log10(scfB)
+    Bias = 10**(logB) # Flicker Noise
+
+    params.append(Bias)
 
     return params, prediction
